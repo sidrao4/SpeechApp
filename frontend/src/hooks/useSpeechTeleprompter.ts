@@ -5,6 +5,12 @@ import { useEffect, useRef, useState } from 'react'
 // occurrence of a common word (e.g. "the") elsewhere in the script.
 const LOOKAHEAD = 8
 
+// If this many spoken words in a row don't match anything at all (not even
+// a pending jump candidate), assume the expected word was just misheard by
+// the recognizer and move past it — getting permanently stuck is worse for
+// a live teleprompter than occasionally skipping one bad word.
+const STALE_LIMIT = 4
+
 function normalize(word: string) {
   return word.toLowerCase().replace(/[^a-z0-9']/g, '')
 }
@@ -45,30 +51,47 @@ export function useSpeechTeleprompter(script: string) {
     // committed once the *next* spoken word confirms the word right after it.
     let pendingCandidate: { index: number } | null = null
 
+    // Consecutive spoken words that matched nothing at all — see STALE_LIMIT.
+    let staleWordCount = 0
+
     function advanceCursor(spoken: string[]) {
       let cur = cursorRef.current
 
       for (const word of spoken) {
+        let matched = false
+
         if (pendingCandidate && normalized[pendingCandidate.index] === word) {
           cur = pendingCandidate.index + 1
           pendingCandidate = null
-          continue
-        }
-        pendingCandidate = null
+          matched = true
+        } else {
+          pendingCandidate = null
 
-        const windowEnd = Math.min(cur + LOOKAHEAD, normalized.length)
-        for (let i = cur; i < windowEnd; i++) {
-          if (normalized[i] !== word) continue
+          const windowEnd = Math.min(cur + LOOKAHEAD, normalized.length)
+          for (let i = cur; i < windowEnd; i++) {
+            if (normalized[i] !== word) continue
 
-          if (i - cur <= 1) {
-            // The immediate next word (or one skipped word) — accept
-            // right away, no confirmation needed, no added latency.
-            cur = i + 1
-          } else {
-            // A bigger jump — hold it pending confirmation from the next word.
-            pendingCandidate = { index: i }
+            if (i - cur <= 1) {
+              // The immediate next word (or one skipped word) — accept
+              // right away, no confirmation needed, no added latency.
+              cur = i + 1
+            } else {
+              // A bigger jump — hold it pending confirmation from the next word.
+              pendingCandidate = { index: i }
+            }
+            matched = true
+            break
           }
-          break
+        }
+
+        if (matched) {
+          staleWordCount = 0
+        } else {
+          staleWordCount++
+          if (staleWordCount >= STALE_LIMIT && cur < normalized.length) {
+            cur += 1
+            staleWordCount = 0
+          }
         }
       }
 
@@ -108,6 +131,7 @@ export function useSpeechTeleprompter(script: string) {
       // so stale slot counts from the old session don't mis-slice the new one.
       consumedPerResult = new Map()
       pendingCandidate = null
+      staleWordCount = 0
 
       if (cursorRef.current < normalized.length) {
         recognition.start()

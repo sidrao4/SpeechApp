@@ -1,5 +1,6 @@
-import { useEffect, useRef } from 'react'
+import { useMemo } from 'react'
 import { useSpeechTeleprompter } from '../hooks/useSpeechTeleprompter'
+import { computeSentenceRanges, currentSentenceRange } from '../lib/sentences'
 
 interface Props {
   script: string
@@ -9,11 +10,8 @@ interface Props {
 
 export function Teleprompter({ script, onExit, onRestart }: Props) {
   const { words, cursor, listening, supported, error } = useSpeechTeleprompter(script)
-  const currentRef = useRef<HTMLSpanElement>(null)
-
-  useEffect(() => {
-    currentRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' })
-  }, [cursor])
+  const sentenceRanges = useMemo(() => computeSentenceRanges(words), [words])
+  const finished = cursor >= words.length
 
   if (!supported) {
     return (
@@ -27,6 +25,8 @@ export function Teleprompter({ script, onExit, onRestart }: Props) {
       </div>
     )
   }
+
+  const { start, end } = currentSentenceRange(sentenceRanges, cursor)
 
   return (
     <div className="flex min-h-full flex-col bg-neutral-900 text-neutral-100">
@@ -42,29 +42,34 @@ export function Teleprompter({ script, onExit, onRestart }: Props) {
         </div>
       </div>
 
-      {/* Fixed-height window showing only a few lines at a time, like a real
-          teleprompter — text scrolls through it instead of the whole script
-          being visible at once. Scrollbar hidden since scrolling is driven
-          entirely by the current word, not the user. */}
+      {/* Only the current sentence is shown — once its last word is passed,
+          currentSentenceRange naturally points at the next one and this
+          swaps over, instead of scrolling through the whole script. */}
       <div className="flex flex-1 items-center justify-center px-6">
-        <div className="h-44 w-full max-w-3xl overflow-y-auto [scrollbar-width:none] md:h-56 [&::-webkit-scrollbar]:hidden">
-          <p className="font-mono text-2xl leading-relaxed md:text-3xl">
-            {words.map((word, i) => (
-              <span
-                key={i}
-                ref={i === cursor ? currentRef : null}
-                className={
-                  i < cursor
-                    ? 'text-neutral-100'
-                    : i === cursor
-                      ? 'rounded bg-amber-400 px-1 text-neutral-900'
-                      : 'text-neutral-600'
-                }
-              >
-                {word}{' '}
-              </span>
-            ))}
-          </p>
+        <div className="w-full max-w-3xl">
+          {finished ? (
+            <p className="text-center font-mono text-2xl text-neutral-500 md:text-3xl">done</p>
+          ) : (
+            <p className="max-h-[50vh] overflow-y-auto font-mono text-2xl leading-relaxed md:text-3xl">
+              {words.slice(start, end).map((word, i) => {
+                const index = start + i
+                return (
+                  <span
+                    key={index}
+                    className={
+                      index < cursor
+                        ? 'text-neutral-100'
+                        : index === cursor
+                          ? 'rounded bg-amber-400 px-1 text-neutral-900'
+                          : 'text-neutral-600'
+                    }
+                  >
+                    {word}{' '}
+                  </span>
+                )
+              })}
+            </p>
+          )}
         </div>
       </div>
     </div>
