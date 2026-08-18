@@ -36,19 +36,39 @@ export function useSpeechTeleprompter(script: string) {
     // transcript ("the" -> "the quick" -> "the quick brown" ...). This tracks
     // how many words we've already consumed from each not-yet-final slot so
     // we only feed newly-appended words into the matcher, instead of
-    // re-matching words we've already advanced past (which is what caused
-    // the cursor to jump ahead to a stray later occurrence of a common word).
-    const consumedPerResult = new Map<number, number>()
+    // re-matching words we've already advanced past.
+    let consumedPerResult = new Map<number, number>()
+
+    // A candidate jump of more than one word ahead — held here rather than
+    // committed immediately, so a single misheard/noise word can't fling the
+    // cursor to a coincidental match further down the script. It's only
+    // committed once the *next* spoken word confirms the word right after it.
+    let pendingCandidate: { index: number } | null = null
 
     function advanceCursor(spoken: string[]) {
       let cur = cursorRef.current
+
       for (const word of spoken) {
+        if (pendingCandidate && normalized[pendingCandidate.index] === word) {
+          cur = pendingCandidate.index + 1
+          pendingCandidate = null
+          continue
+        }
+        pendingCandidate = null
+
         const windowEnd = Math.min(cur + LOOKAHEAD, normalized.length)
         for (let i = cur; i < windowEnd; i++) {
-          if (normalized[i] === word) {
+          if (normalized[i] !== word) continue
+
+          if (i - cur <= 1) {
+            // The immediate next word (or one skipped word) — accept
+            // right away, no confirmation needed, no added latency.
             cur = i + 1
-            break
+          } else {
+            // A bigger jump — hold it pending confirmation from the next word.
+            pendingCandidate = { index: i }
           }
+          break
         }
       }
 
@@ -61,13 +81,13 @@ export function useSpeechTeleprompter(script: string) {
     recognition.onresult = (event) => {
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const result = event.results[i]
-        const words = result[0].transcript.trim().split(/\s+/).map(normalize).filter(Boolean)
+        const resultWords = result[0].transcript.trim().split(/\s+/).map(normalize).filter(Boolean)
         const alreadyConsumed = consumedPerResult.get(i) ?? 0
-        const newWords = words.slice(alreadyConsumed)
+        const newWords = resultWords.slice(alreadyConsumed)
 
         if (newWords.length) {
           advanceCursor(newWords)
-          consumedPerResult.set(i, words.length)
+          consumedPerResult.set(i, resultWords.length)
         }
 
         if (result.isFinal) {
@@ -83,7 +103,12 @@ export function useSpeechTeleprompter(script: string) {
 
     recognition.onend = () => {
       // The browser stops recognition after a pause in speech even with
-      // continuous=true. Auto-restart until the script is finished.
+      // continuous=true, and starting it again begins a brand new result
+      // sequence (indices restart from 0). Reset our per-session tracking
+      // so stale slot counts from the old session don't mis-slice the new one.
+      consumedPerResult = new Map()
+      pendingCandidate = null
+
       if (cursorRef.current < normalized.length) {
         recognition.start()
       } else {
