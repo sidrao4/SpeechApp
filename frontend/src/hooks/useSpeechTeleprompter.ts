@@ -31,14 +31,16 @@ export function useSpeechTeleprompter(script: string) {
     recognition.interimResults = true
     recognition.lang = 'en-US'
 
-    recognition.onresult = (event) => {
-      let transcript = ''
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        transcript += ' ' + event.results[i][0].transcript
-      }
-      const spoken = transcript.trim().split(/\s+/).map(normalize).filter(Boolean)
-      if (!spoken.length) return
+    // The browser re-fires onresult repeatedly while a phrase is still being
+    // recognized, each time re-sending the same result slot with a longer
+    // transcript ("the" -> "the quick" -> "the quick brown" ...). This tracks
+    // how many words we've already consumed from each not-yet-final slot so
+    // we only feed newly-appended words into the matcher, instead of
+    // re-matching words we've already advanced past (which is what caused
+    // the cursor to jump ahead to a stray later occurrence of a common word).
+    const consumedPerResult = new Map<number, number>()
 
+    function advanceCursor(spoken: string[]) {
       let cur = cursorRef.current
       for (const word of spoken) {
         const windowEnd = Math.min(cur + LOOKAHEAD, normalized.length)
@@ -53,6 +55,24 @@ export function useSpeechTeleprompter(script: string) {
       if (cur !== cursorRef.current) {
         cursorRef.current = cur
         setCursor(cur)
+      }
+    }
+
+    recognition.onresult = (event) => {
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const result = event.results[i]
+        const words = result[0].transcript.trim().split(/\s+/).map(normalize).filter(Boolean)
+        const alreadyConsumed = consumedPerResult.get(i) ?? 0
+        const newWords = words.slice(alreadyConsumed)
+
+        if (newWords.length) {
+          advanceCursor(newWords)
+          consumedPerResult.set(i, words.length)
+        }
+
+        if (result.isFinal) {
+          consumedPerResult.delete(i)
+        }
       }
     }
 
