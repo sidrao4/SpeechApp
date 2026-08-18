@@ -1,14 +1,9 @@
+
 import { useEffect, useRef, useState } from 'react'
 import { alignRecentSpeech } from '../lib/alignRecentSpeech'
 
 // How many recently-heard words we keep as context for alignment.
 const RECENT_BUFFER_SIZE = 8
-
-// Safety net only: if alignment finds nothing at all for this many
-// consecutive updates despite a full buffer of real speech, nudge the
-// cursor forward one word rather than stalling indefinitely. This should
-// rarely fire — the LCS alignment itself is what keeps things moving.
-const STALL_LIMIT = 6
 
 function normalize(word: string) {
   return word.toLowerCase().replace(/[^a-z0-9']/g, '')
@@ -45,27 +40,49 @@ export function useSpeechTeleprompter(script: string) {
     let consumedPerResult = new Map<number, number>()
 
     let recentSpoken: string[] = []
-    let stallCount = 0
+
+    function advanceTo(position: number) {
+      cursorRef.current = position
+      setCursor(position)
+      // The buffer's only job is resolving uncertainty. Once we're
+      // confident again, clear it — otherwise stale words from behind
+      // the new cursor can wrongly influence the next alignment.
+      recentSpoken = []
+    }
+
+    function onNewWord(word: string) {
+      const cur = cursorRef.current
+
+      // Fast path: the word you'd expect next while reading normally,
+      // checked directly with no search — can't be thrown off by a
+      // repeated word elsewhere in the script the way a window search
+      // could. This is what makes normal-pace reading feel instant.
+      if (cur < normalized.length && word === normalized[cur]) {
+        advanceTo(cur + 1)
+        return
+      }
+      if (cur + 1 < normalized.length && word === normalized[cur + 1]) {
+        advanceTo(cur + 2)
+        return
+      }
+
+      // Otherwise something's uncertain (misheard word, skip, or a
+      // bigger jump) — fall back to alignment over recent context. If
+      // nothing aligns at all, we deliberately just wait rather than
+      // guessing forward: going off-script (ad-libbing, a tangent, then
+      // picking the script back up) should pause the cursor in place,
+      // not force it ahead through text you never said.
+      recentSpoken = [...recentSpoken, word].slice(-RECENT_BUFFER_SIZE)
+      const aligned = alignRecentSpeech(recentSpoken, normalized, cur)
+
+      if (aligned !== null && aligned > cur) {
+        advanceTo(aligned)
+      }
+    }
 
     function onNewWords(newWords: string[]) {
-      recentSpoken = [...recentSpoken, ...newWords].slice(-RECENT_BUFFER_SIZE)
-
-      const aligned = alignRecentSpeech(recentSpoken, normalized, cursorRef.current)
-
-      if (aligned !== null && aligned > cursorRef.current) {
-        cursorRef.current = aligned
-        setCursor(aligned)
-        stallCount = 0
-      } else {
-        stallCount++
-        if (stallCount >= STALL_LIMIT && recentSpoken.length >= RECENT_BUFFER_SIZE) {
-          const nudged = Math.min(cursorRef.current + 1, normalized.length)
-          if (nudged !== cursorRef.current) {
-            cursorRef.current = nudged
-            setCursor(nudged)
-          }
-          stallCount = 0
-        }
+      for (const word of newWords) {
+        onNewWord(word)
       }
     }
 
@@ -98,7 +115,6 @@ export function useSpeechTeleprompter(script: string) {
       // sequence (indices restart from 0). Reset per-session tracking so
       // stale slot counts from the old session don't mis-slice the new one.
       consumedPerResult = new Map()
-      stallCount = 0
 
       if (cursorRef.current < normalized.length) {
         recognition.start()

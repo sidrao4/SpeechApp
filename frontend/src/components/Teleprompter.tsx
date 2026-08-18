@@ -1,17 +1,64 @@
-import { useMemo } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { useSpeechTeleprompter } from '../hooks/useSpeechTeleprompter'
-import { computeSentenceRanges, currentSentenceRange } from '../lib/sentences'
+import * as api from '../lib/api'
 
 interface Props {
   script: string
+  userId: number | null
+  scriptId: number | null
   onExit: () => void
   onRestart: () => void
 }
 
-export function Teleprompter({ script, onExit, onRestart }: Props) {
+export function Teleprompter({ script, userId, scriptId, onExit, onRestart }: Props) {
   const { words, cursor, listening, supported, error } = useSpeechTeleprompter(script)
-  const sentenceRanges = useMemo(() => computeSentenceRanges(words), [words])
-  const finished = cursor >= words.length
+  const currentRef = useRef<HTMLSpanElement>(null)
+
+  const startedAtRef = useRef(new Date().toISOString())
+  const recordedRef = useRef(false)
+
+  // Records one practice-session row (best-effort, silently skipped if
+  // logged out or the script wasn't saved). Guarded so it only ever fires
+  // once per mount, whether that's from finishing the script, exiting, or
+  // restarting — all three call this before anything else happens.
+  const recordSession = useCallback(() => {
+    if (recordedRef.current) return
+    recordedRef.current = true
+    if (userId === null || scriptId === null) return
+
+    api
+      .createSession({
+        scriptId,
+        userId,
+        startedAt: startedAtRef.current,
+        endedAt: new Date().toISOString(),
+        wordsCompleted: cursor,
+        totalWords: words.length,
+      })
+      .catch(() => {
+        // Metrics are best-effort — don't interrupt the user over this.
+      })
+  }, [userId, scriptId, cursor, words.length])
+
+  useEffect(() => {
+    if (words.length > 0 && cursor >= words.length) {
+      recordSession()
+    }
+  }, [cursor, words.length, recordSession])
+
+  useEffect(() => {
+    currentRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  }, [cursor])
+
+  const handleExit = () => {
+    recordSession()
+    onExit()
+  }
+
+  const handleRestart = () => {
+    recordSession()
+    onRestart()
+  }
 
   if (!supported) {
     return (
@@ -19,57 +66,50 @@ export function Teleprompter({ script, onExit, onRestart }: Props) {
         <p className="max-w-md text-red-400">
           Your browser doesn't support live speech recognition. Try Chrome or Edge.
         </p>
-        <button type="button" onClick={onExit} className="text-amber-400 underline">
+        <button type="button" onClick={handleExit} className="text-amber-400 underline">
           back
         </button>
       </div>
     )
   }
 
-  const { start, end } = currentSentenceRange(sentenceRanges, cursor)
-
   return (
     <div className="flex min-h-full flex-col bg-neutral-900 text-neutral-100">
       <div className="flex items-center justify-between px-6 py-4 text-sm text-neutral-500">
         <span>{error ? error : listening ? '● listening' : 'stopped'}</span>
         <div className="flex items-center gap-4">
-          <button type="button" onClick={onRestart} className="transition hover:text-amber-400">
+          <button type="button" onClick={handleRestart} className="transition hover:text-amber-400">
             restart
           </button>
-          <button type="button" onClick={onExit} className="transition hover:text-amber-400">
+          <button type="button" onClick={handleExit} className="transition hover:text-amber-400">
             exit
           </button>
         </div>
       </div>
 
-      {/* Only the current sentence is shown — once its last word is passed,
-          currentSentenceRange naturally points at the next one and this
-          swaps over, instead of scrolling through the whole script. */}
+      {/* The whole script stays in the DOM; this fixed-height window shows
+          only a few lines of it at a time, and scrolls smoothly to keep the
+          current word centered as it advances — like a real teleprompter,
+          rather than swapping discrete chunks in and out. */}
       <div className="flex flex-1 items-center justify-center px-6">
-        <div className="w-full max-w-3xl">
-          {finished ? (
-            <p className="text-center font-mono text-2xl text-neutral-500 md:text-3xl">done</p>
-          ) : (
-            <p className="max-h-[50vh] overflow-y-auto font-mono text-2xl leading-relaxed md:text-3xl">
-              {words.slice(start, end).map((word, i) => {
-                const index = start + i
-                return (
-                  <span
-                    key={index}
-                    className={
-                      index < cursor
-                        ? 'text-neutral-100'
-                        : index === cursor
-                          ? 'rounded bg-amber-400 px-1 text-neutral-900'
-                          : 'text-neutral-600'
-                    }
-                  >
-                    {word}{' '}
-                  </span>
-                )
-              })}
-            </p>
-          )}
+        <div className="h-44 w-full max-w-3xl overflow-y-auto [scrollbar-width:none] md:h-56 [&::-webkit-scrollbar]:hidden">
+          <p className="font-mono text-2xl leading-relaxed md:text-3xl">
+            {words.map((word, i) => (
+              <span
+                key={i}
+                ref={i === cursor ? currentRef : null}
+                className={
+                  i < cursor
+                    ? 'text-neutral-100'
+                    : i === cursor
+                      ? 'rounded bg-amber-400 px-1 text-neutral-900'
+                      : 'text-neutral-600'
+                }
+              >
+                {word}{' '}
+              </span>
+            ))}
+          </p>
         </div>
       </div>
     </div>
