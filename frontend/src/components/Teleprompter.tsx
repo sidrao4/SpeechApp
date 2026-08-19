@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSpeechTeleprompter } from '../hooks/useSpeechTeleprompter'
+import { CameraPreview } from './CameraPreview'
 import * as api from '../lib/api'
 
 interface Props {
@@ -151,6 +152,8 @@ export function Teleprompter({ script, userId, scriptId, onExit, onRestart }: Pr
           </div>
         )}
       </div>
+
+      <CameraPreview finished={stats !== null} />
     </div>
   )
 }
