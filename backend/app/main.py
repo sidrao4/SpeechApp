@@ -1,13 +1,42 @@
 import os
+import time
+from collections import defaultdict
 from contextlib import asynccontextmanager
+from typing import Literal
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from google import genai
+from google.genai import errors as genai_errors
 from pydantic import BaseModel, Field
 
 from .db import get_connection, init_db
 
 WORDS_PER_MINUTE = 140
+
+# Script generation calls a (free-tier, but rate-limited) API with no login
+# required to use it, so these bound worst-case load from a single abusive
+# client rather than relying on auth to gate it at all.
+GENERATE_LENGTH_TARGETS = {"short": 60, "medium": 150, "long": 300}
+RATE_LIMIT_WINDOW_SECONDS = 600
+RATE_LIMIT_MAX_REQUESTS = 5
+_rate_limit_state: dict[str, list[float]] = defaultdict(list)
+
+# "-latest" aliases aren't Google's recommendation for production (they can
+# swap to a new model version with only ~2 weeks notice), but for a small
+# personal project that trade-off is worth not having to track exact model
+# version strings by hand as they change. Override via env var if needed.
+GENERATE_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-lite-latest")
+
+
+def get_genai_client() -> genai.Client:
+    # Constructed lazily, per-request, rather than at import time — if
+    # GEMINI_API_KEY isn't set, only this endpoint should fail, not the
+    # entire app on startup (login/scripts/sessions don't need this key).
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=503, detail="Script generation isn't configured on this server.")
+    return genai.Client(api_key=api_key)
 
 
 @asynccontextmanager
@@ -73,6 +102,15 @@ class SessionResponse(BaseModel):
     ended_at: str
     words_completed: int
     total_words: int
+
+
+class GenerateScriptRequest(BaseModel):
+    prompt: str = Field(min_length=1, max_length=500)
+    length: Literal["short", "medium", "long"] = "medium"
+
+
+class GenerateScriptResponse(BaseModel):
+    text: str
 
 
 @app.get("/health")
@@ -205,3 +243,45 @@ def list_sessions(script_id: int):
         return [dict(row) for row in rows]
     finally:
         conn.close()
+
+
+def _client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _check_rate_limit(client_ip: str) -> None:
+    now = time.time()
+    recent = [t for t in _rate_limit_state[client_ip] if now - t < RATE_LIMIT_WINDOW_SECONDS]
+    if len(recent) >= RATE_LIMIT_MAX_REQUESTS:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many script generations from this connection — try again in a few minutes.",
+        )
+    recent.append(now)
+    _rate_limit_state[client_ip] = recent
+
+
+@app.post("/api/generate-script", response_model=GenerateScriptResponse)
+def generate_script(body: GenerateScriptRequest, request: Request):
+    _check_rate_limit(_client_ip(request))
+    client = get_genai_client()
+
+    target_words = GENERATE_LENGTH_TARGETS[body.length]
+    prompt_text = (
+        "Write a short script meant to be read aloud (not an essay, not "
+        f"bullet points) about: {body.prompt}\n\n"
+        f"Target length: about {target_words} words. Output only the "
+        "script text itself — no title, no preamble, no markdown."
+    )
+    try:
+        response = client.models.generate_content(model=GENERATE_MODEL, contents=prompt_text)
+    except genai_errors.APIError as exc:
+        raise HTTPException(status_code=502, detail="Script generation failed — try again.") from exc
+
+    text = (response.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=502, detail="Script generation returned nothing — try again.")
+    return {"text": text}

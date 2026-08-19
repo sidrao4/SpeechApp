@@ -34,7 +34,9 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     ...options,
   })
   if (!response.ok) {
-    throw new Error(`${options?.method ?? 'GET'} ${path} failed: ${response.status}`)
+    const body = await response.json().catch(() => null)
+    const detail = body && typeof body === 'object' && 'detail' in body ? String(body.detail) : null
+    throw new Error(detail ?? `${options?.method ?? 'GET'} ${path} failed: ${response.status}`)
   }
   return response.json() as Promise<T>
 }
@@ -81,4 +83,13 @@ export function createSession(session: {
 
 export function listSessions(scriptId: number): Promise<PracticeSession[]> {
   return request(`/api/scripts/${scriptId}/sessions`)
+}
+
+export type ScriptLength = 'short' | 'medium' | 'long'
+
+export function generateScript(prompt: string, length: ScriptLength): Promise<{ text: string }> {
+  return request('/api/generate-script', {
+    method: 'POST',
+    body: JSON.stringify({ prompt, length }),
+  })
 }
