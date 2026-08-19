@@ -1,8 +1,7 @@
-
 import { useEffect, useRef, useState } from 'react'
 import { alignRecentSpeech } from '../lib/alignRecentSpeech'
 
-// How many recently-heard words we keep as context for alignment.
+// how many recent words we keep around for the fuzzy matcher
 const RECENT_BUFFER_SIZE = 8
 
 function normalize(word: string) {
@@ -31,12 +30,9 @@ export function useSpeechTeleprompter(script: string) {
     recognition.interimResults = true
     recognition.lang = 'en-US'
 
-    // The browser re-fires onresult repeatedly while a phrase is still being
-    // recognized, each time re-sending the same result slot with a longer
-    // transcript ("the" -> "the quick" -> "the quick brown" ...). This tracks
-    // how many words we've already consumed from each not-yet-final slot so
-    // we only feed newly-appended words into the buffer, instead of
-    // re-appending words we've already seen.
+    // chrome keeps re-firing onresult for the same phrase as it refines its
+    // guess ("the" -> "the quick" -> "the quick brown"...), so we track how
+    // much of each slot we've already used and only feed in the new part
     let consumedPerResult = new Map<number, number>()
 
     let recentSpoken: string[] = []
@@ -44,19 +40,16 @@ export function useSpeechTeleprompter(script: string) {
     function advanceTo(position: number) {
       cursorRef.current = position
       setCursor(position)
-      // The buffer's only job is resolving uncertainty. Once we're
-      // confident again, clear it — otherwise stale words from behind
-      // the new cursor can wrongly influence the next alignment.
+      // clear the buffer once we're confident again, old words in there
+      // can throw off the next match
       recentSpoken = []
     }
 
     function onNewWord(word: string) {
       const cur = cursorRef.current
 
-      // Fast path: the word you'd expect next while reading normally,
-      // checked directly with no search — can't be thrown off by a
-      // repeated word elsewhere in the script the way a window search
-      // could. This is what makes normal-pace reading feel instant.
+      // if it's exactly the word we expect next, just take it, no need to
+      // run it through the matcher
       if (cur < normalized.length && word === normalized[cur]) {
         advanceTo(cur + 1)
         return
@@ -66,12 +59,9 @@ export function useSpeechTeleprompter(script: string) {
         return
       }
 
-      // Otherwise something's uncertain (misheard word, skip, or a
-      // bigger jump) — fall back to alignment over recent context. If
-      // nothing aligns at all, we deliberately just wait rather than
-      // guessing forward: going off-script (ad-libbing, a tangent, then
-      // picking the script back up) should pause the cursor in place,
-      // not force it ahead through text you never said.
+      // something's off (misheard, skipped, whatever) - try to realign.
+      // if nothing lines up we just sit still. better to wait than guess
+      // and jump to the wrong spot if someone goes off script for a bit
       recentSpoken = [...recentSpoken, word].slice(-RECENT_BUFFER_SIZE)
       const aligned = alignRecentSpeech(recentSpoken, normalized, cur)
 
@@ -110,10 +100,9 @@ export function useSpeechTeleprompter(script: string) {
     }
 
     recognition.onend = () => {
-      // The browser stops recognition after a pause in speech even with
-      // continuous=true, and starting it again begins a brand new result
-      // sequence (indices restart from 0). Reset per-session tracking so
-      // stale slot counts from the old session don't mis-slice the new one.
+      // recognition randomly stops itself after a pause even with
+      // continuous on, and restarting it means the result indices reset to
+      // 0, so wipe our tracking or the next session gets sliced wrong
       consumedPerResult = new Map()
 
       if (cursorRef.current < normalized.length) {

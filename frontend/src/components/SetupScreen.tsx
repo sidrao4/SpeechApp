@@ -44,8 +44,8 @@ export function SetupScreen({
 
   function handleTextChange(value: string) {
     setText(value)
-    // Editing the text yourself, even after a generation, means it's no
-    // longer "the generated script" in any saveable sense.
+    // if you edit it yourself after generating, it's not really "the
+    // generated script" anymore
     setSource('pasted')
     setSavedScriptId(null)
   }
@@ -92,7 +92,7 @@ export function SetupScreen({
         <LoginWidget user={user} onLogin={onLogin} onLogout={onLogout} />
       </div>
 
-      <h1 className="text-3xl font-semibold tracking-tight text-amber-400">speechapp</h1>
+      <h1 className="text-3xl font-semibold tracking-tight text-amber-400">verbatim</h1>
 
       {user && <ScriptHistory scripts={scripts} onSelect={onSelectScript} />}
 

@@ -14,25 +14,23 @@ from .db import get_connection, init_db
 
 WORDS_PER_MINUTE = 140
 
-# Script generation calls a (free-tier, but rate-limited) API with no login
-# required to use it, so these bound worst-case load from a single abusive
-# client rather than relying on auth to gate it at all.
+# script generation hits a free (but rate limited) api with no login
+# needed, so this just caps how much one client can hammer it
 GENERATE_LENGTH_TARGETS = {"short": 60, "medium": 150, "long": 300}
 RATE_LIMIT_WINDOW_SECONDS = 600
 RATE_LIMIT_MAX_REQUESTS = 5
 _rate_limit_state: dict[str, list[float]] = defaultdict(list)
 
-# "-latest" aliases aren't Google's recommendation for production (they can
-# swap to a new model version with only ~2 weeks notice), but for a small
-# personal project that trade-off is worth not having to track exact model
-# version strings by hand as they change. Override via env var if needed.
+# using the -latest alias here, google says not to for prod since it can
+# swap versions with only ~2 weeks notice, but for a small project that's
+# fine, saves having to update a hardcoded model string by hand. can
+# override with an env var if needed
 GENERATE_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-lite-latest")
 
 
 def get_genai_client() -> genai.Client:
-    # Constructed lazily, per-request, rather than at import time — if
-    # GEMINI_API_KEY isn't set, only this endpoint should fail, not the
-    # entire app on startup (login/scripts/sessions don't need this key).
+    # built lazily per request instead of at import time, so a missing key
+    # only breaks this one route instead of the whole app failing to start
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         raise HTTPException(status_code=503, detail="Script generation isn't configured on this server.")

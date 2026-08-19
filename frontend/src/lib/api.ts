@@ -1,6 +1,5 @@
-// Thin fetch wrapper for the backend. Plain fetch rather than a library —
-// the frontend has exactly two runtime dependencies (react, react-dom) and
-// this API surface is small enough not to need axios/react-query.
+// just a thin fetch wrapper, didn't feel like pulling in axios/react-query
+// for this small an api surface
 
 const API_URL = import.meta.env.VITE_API_URL
 

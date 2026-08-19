@@ -32,10 +32,9 @@ export function Teleprompter({ script, userId, scriptId, onExit, onRestart }: Pr
   const recordedRef = useRef(false)
   const [stats, setStats] = useState<Stats | null>(null)
 
-  // Records one practice-session row (best-effort, silently skipped if
-  // logged out or the script wasn't saved). Guarded so it only ever fires
-  // once per mount, whether that's from finishing the script, exiting, or
-  // restarting — all three call this before anything else happens.
+  // saves a session row, best effort - skips quietly if you're not logged
+  // in or the script never got saved. guarded so it only fires once per
+  // mount no matter which of finish/exit/restart triggers it first
   const recordSession = useCallback(() => {
     if (recordedRef.current) return
     recordedRef.current = true
@@ -51,15 +50,14 @@ export function Teleprompter({ script, userId, scriptId, onExit, onRestart }: Pr
         totalWords: words.length,
       })
       .catch(() => {
-        // Metrics are best-effort — don't interrupt the user over this.
+        // best-effort, don't bug the user about it
       })
   }, [userId, scriptId, cursor, words.length])
 
   useEffect(() => {
     if (words.length > 0 && cursor >= words.length) {
-      // Stats are computed client-side from the same data the session POST
-      // uses, so they show up whether or not you're logged in — persisting
-      // them is a bonus, not a requirement for seeing them.
+      // computed from the same data the session POST uses, so these show
+      // up either way - saving them is a bonus, not required to see them
       if (!recordedRef.current) {
         const durationSeconds = Math.max(
           (Date.now() - new Date(startedAtRef.current).getTime()) / 1000,
@@ -127,10 +125,8 @@ export function Teleprompter({ script, userId, scriptId, onExit, onRestart }: Pr
             </p>
           </div>
         ) : (
-          // The whole script stays in the DOM; this fixed-height window
-          // shows only a few lines of it at a time, and scrolls smoothly to
-          // keep the current word centered as it advances — like a real
-          // teleprompter, rather than swapping discrete chunks in and out.
+          // whole script stays in the dom, this box just shows a few lines
+          // at a time and scrolls to keep the current word centered
           <div className="h-44 w-full max-w-3xl overflow-y-auto [scrollbar-width:none] md:h-56 [&::-webkit-scrollbar]:hidden">
             <p className="font-mono text-2xl leading-relaxed md:text-3xl">
               {words.map((word, i) => (

@@ -1,20 +1,19 @@
-// Aligns a rolling buffer of recently-heard words against a window of the
-// script using LCS (longest common subsequence) — the same core algorithm
-// behind `diff`. Rather than deciding word-by-word whether each new word
-// matches exactly the next expected word (brittle: one missed word throws
-// the whole thing off), this looks at several recent words together and
-// finds where they best line up as a *subsequence* of the script, which
-// tolerates a skipped, extra, or misheard word in the middle — the
-// surrounding correct words carry the match.
+// lines up a buffer of recently heard words against a window of the script
+// using LCS (longest common subsequence, same idea as `diff`). matching
+// word-by-word against just "the next expected word" is brittle - miss one
+// word and the whole thing falls apart. this way a handful of recent words
+// get matched as a subsequence of the script, so a skipped/extra/misheard
+// word in the middle doesn't derail things, the words around it still carry
+// the match
 //
-// LCS alone isn't enough, though: a subsequence match doesn't require the
-// matched words to be close together, so early on (little context yet,
-// wide lookahead) two ordinary short words like "to" and "of" can each
-// turn up somewhere in the window purely by coincidence and look like a
-// confident match. Two additional checks guard against that: the matched
-// words must be reasonably close together in the script (not just present
-// somewhere in order), and a bigger jump requires proportionally more
-// corroborating words than a small one.
+// plain LCS isn't quite enough on its own though. a subsequence match
+// doesn't care how far apart the matched words are, so early on when there's
+// not much context yet and the lookahead window is wide, two common short
+// words like "to" and "of" can both show up somewhere in the window by pure
+// coincidence and look like a real match. so there's two extra checks:
+// matched words have to be reasonably close together (not just present
+// somewhere, in order), and bigger jumps need more words backing them up
+// than small ones do
 
 const BACK_SLACK = 2 // let the match resolve slightly behind the cursor
 const FORWARD_WINDOW = 14 // how far ahead of the cursor to search
@@ -54,7 +53,7 @@ export function alignRecentSpeech(
   const lcsLength = dp[n][m]
   if (lcsLength < MIN_MATCH) return null
 
-  // Backtrack to find where the matched words start and end in `target`.
+  // walk back through the dp table to find where the match starts/ends
   let i = n
   let j = m
   let firstMatchJ = -1
@@ -73,9 +72,8 @@ export function alignRecentSpeech(
   }
   if (lastMatchJ === -1) return null
 
-  // Reject matches whose words are spread out much further than the number
-  // of words actually matched — real contiguous speech doesn't have big
-  // gaps between correctly-recognized words.
+  // if the matched words are way more spread out than how many actually
+  // matched, that's not real contiguous speech, bail
   const span = lastMatchJ - firstMatchJ + 1
   if (span > lcsLength + SPAN_SLACK) return null
 

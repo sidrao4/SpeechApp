@@ -1,6 +1,5 @@
-// The Web Speech API (SpeechRecognition) isn't part of TypeScript's
-// standard DOM lib yet, since it's still a non-standard/experimental
-// browser API. This declares just the shape this app actually uses.
+// SpeechRecognition still isn't in TS's DOM types since it's not a real
+// standard yet, so just declaring the bits we actually use here
 
 interface SpeechRecognitionResult {
   [index: number]: { transcript: string }

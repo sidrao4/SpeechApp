@@ -2,10 +2,9 @@ import os
 import sqlite3
 from pathlib import Path
 
-# Falls back to a local file (already .gitignore'd) for local dev. In
-# production this must point at a path on a mounted Railway volume — the
-# container filesystem otherwise gets wiped on every redeploy/restart.
-DATABASE_PATH = Path(os.environ.get("DATABASE_PATH", "./data/speechapp.db"))
+# falls back to a local file (gitignored) for dev. in prod this needs to
+# point at a mounted Railway volume or the db gets wiped on every redeploy
+DATABASE_PATH = Path(os.environ.get("DATABASE_PATH", "./data/verbatim.db"))
 
 SCHEMA_PATH = Path(__file__).resolve().parent.parent / "schema.sql"
 

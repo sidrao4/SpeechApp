@@ -2,16 +2,14 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 type Status = 'starting' | 'live' | 'stopped' | 'unavailable'
 
-// Live camera self-view + local-only recording. Nothing here ever leaves
-// the browser — the recorded clip is an in-memory Blob URL for immediate
-// playback (and an optional device download), discarded when the
-// component unmounts.
+// live camera preview + local recording. never leaves the browser - the
+// clip is just an in-memory blob url for playback and downloading, gets
+// tossed when the component unmounts.
 //
-// Known issue: played-back video renders black in-browser (see the
-// camera-feature memory note for the full investigation trail). The save-
-// to-device download still produces a real file with real audio/video
-// data, which is what matters here — not pursuing the in-browser preview
-// fix further for now.
+// known bug: the playback element renders black in-browser even though the
+// recording itself is fine (downloads fine, real data, plays elsewhere).
+// spent a while trying to fix it, no luck yet, not chasing it further right
+// now since the download still works
 export function useCameraRecorder() {
   const videoRef = useRef<HTMLVideoElement>(null)
   const [status, setStatus] = useState<Status>('starting')
@@ -74,8 +72,7 @@ export function useCameraRecorder() {
     if (!recorder || recorder.state === 'inactive') return
 
     recorder.onstop = () => {
-      // Tag the Blob with whatever MediaRecorder actually used, not an
-      // assumed value.
+      // use whatever mimeType the recorder actually picked, not a guess
       const type = recorder.mimeType || 'video/webm'
       const blob = new Blob(chunksRef.current, { type })
       setRecordedType(type)

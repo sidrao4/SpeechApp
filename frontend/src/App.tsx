@@ -8,9 +8,9 @@ import type { Script, ScriptLength } from './lib/api'
 type Screen = 'setup' | 'prompter'
 
 interface StartOptions {
-  // Pasted text auto-saves on start (existing behavior). Generated text
-  // never does — saving it is only ever explicit, via the dedicated save
-  // button, so it stays truly temporary unless you opt in.
+  // pasted text auto-saves on start like before. generated text doesn't -
+  // that's only ever saved if you hit the save button, stays temporary
+  // otherwise
   autoSave: boolean
   scriptId: number | null
 }
@@ -19,9 +19,8 @@ function App() {
   const [screen, setScreen] = useState<Screen>('setup')
   const [script, setScript] = useState('')
   const [scriptId, setScriptId] = useState<number | null>(null)
-  // Bumping this remounts Teleprompter from scratch — fresh cursor, fresh
-  // mic session, fresh matching state — which is the cleanest way to
-  // fully reset it on restart.
+  // bumping this remounts Teleprompter from scratch (new cursor, new mic
+  // session, etc) - easiest way to fully reset on restart
   const [attempt, setAttempt] = useState(0)
 
   const { user, login, logout } = useAuth()
@@ -31,8 +30,8 @@ function App() {
     try {
       setScripts(await api.listScripts(userId))
     } catch {
-      // History is a nice-to-have, not a blocker — if the backend isn't
-      // reachable, the rest of the app still needs to work.
+      // history is a nice-to-have, if the backend's down the rest of the
+      // app should still work fine
     }
   }, [])
 
@@ -52,7 +51,7 @@ function App() {
         usedScriptId = created.id
         setScripts((prev) => [created, ...prev])
       } catch {
-        // Couldn't save it — still let them practice with it locally.
+        // save failed, just let them practice with it locally anyway
       }
     }
     setScriptId(usedScriptId)

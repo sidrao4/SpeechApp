@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import * as api from '../lib/api'
 import type { User } from '../lib/api'
 
-const STORAGE_KEY = 'speechapp.user'
+const STORAGE_KEY = 'verbatim.user'
 
 function loadStoredUser(): User | null {
   try {
@@ -13,9 +13,9 @@ function loadStoredUser(): User | null {
   }
 }
 
-// Login here just means "the browser remembers a user id" — there's no
-// password, so there's no secret a real session would be protecting. See
-// the backend's /api/login for the matching find-or-create logic.
+// "login" just means the browser remembers a user id, no password so
+// there's no secret to actually protect. see /api/login on the backend
+// for the find-or-create bit
 export function useAuth() {
   const [user, setUser] = useState<User | null>(() => loadStoredUser())
 
