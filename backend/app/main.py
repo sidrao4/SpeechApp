@@ -1,5 +1,6 @@
 import os
 import time
+from datetime import datetime
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from typing import Literal
@@ -80,7 +81,7 @@ class ScriptResponse(BaseModel):
     text: str
     word_count: int
     est_read_time_seconds: int
-    created_at: str
+    created_at: datetime
 
 
 class SessionCreateRequest(BaseModel):
@@ -122,93 +123,74 @@ def login(body: LoginRequest):
     if not username:
         raise HTTPException(status_code=422, detail="username cannot be empty")
 
-    conn = get_connection()
-    try:
+    with get_connection() as conn:
         row = conn.execute(
-            "SELECT id, username FROM users WHERE username = ? COLLATE NOCASE",
+            "SELECT id, username FROM users WHERE lower(username) = lower(%s)",
             (username,),
         ).fetchone()
         if row is not None:
-            return {"id": row["id"], "username": row["username"]}
+            return row
 
-        cursor = conn.execute("INSERT INTO users (username) VALUES (?)", (username,))
-        conn.commit()
-        return {"id": cursor.lastrowid, "username": username}
-    finally:
-        conn.close()
+        return conn.execute(
+            "INSERT INTO users (username) VALUES (%s) RETURNING id, username",
+            (username,),
+        ).fetchone()
+
+
+SCRIPT_COLUMNS = "id, user_id, text, word_count, est_read_time_seconds, created_at"
+SESSION_COLUMNS = "id, script_id, user_id, started_at, ended_at, words_completed, total_words"
 
 
 @app.get("/api/scripts", response_model=list[ScriptResponse])
 def list_scripts(user_id: int = Query(...)):
-    conn = get_connection()
-    try:
-        rows = conn.execute(
-            "SELECT id, user_id, text, word_count, est_read_time_seconds, created_at "
-            "FROM scripts WHERE user_id = ? ORDER BY created_at DESC",
+    with get_connection() as conn:
+        return conn.execute(
+            f"SELECT {SCRIPT_COLUMNS} FROM scripts WHERE user_id = %s ORDER BY created_at DESC",
             (user_id,),
         ).fetchall()
-        return [dict(row) for row in rows]
-    finally:
-        conn.close()
 
 
 @app.post("/api/scripts", response_model=ScriptResponse, status_code=201)
 def create_script(body: ScriptCreateRequest):
-    conn = get_connection()
-    try:
-        user = conn.execute("SELECT id FROM users WHERE id = ?", (body.user_id,)).fetchone()
+    with get_connection() as conn:
+        user = conn.execute("SELECT id FROM users WHERE id = %s", (body.user_id,)).fetchone()
         if user is None:
             raise HTTPException(status_code=404, detail="user not found")
 
         word_count = len(body.text.split())
         est_read_time_seconds = round(word_count * 60 / WORDS_PER_MINUTE)
 
-        cursor = conn.execute(
+        return conn.execute(
             "INSERT INTO scripts (user_id, text, word_count, est_read_time_seconds) "
-            "VALUES (?, ?, ?, ?)",
+            f"VALUES (%s, %s, %s, %s) RETURNING {SCRIPT_COLUMNS}",
             (body.user_id, body.text, word_count, est_read_time_seconds),
-        )
-        conn.commit()
-        row = conn.execute(
-            "SELECT id, user_id, text, word_count, est_read_time_seconds, created_at "
-            "FROM scripts WHERE id = ?",
-            (cursor.lastrowid,),
         ).fetchone()
-        return dict(row)
-    finally:
-        conn.close()
 
 
 @app.get("/api/scripts/{script_id}", response_model=ScriptResponse)
 def get_script(script_id: int):
-    conn = get_connection()
-    try:
+    with get_connection() as conn:
         row = conn.execute(
-            "SELECT id, user_id, text, word_count, est_read_time_seconds, created_at "
-            "FROM scripts WHERE id = ?",
-            (script_id,),
+            f"SELECT {SCRIPT_COLUMNS} FROM scripts WHERE id = %s", (script_id,)
         ).fetchone()
         if row is None:
             raise HTTPException(status_code=404, detail="script not found")
-        return dict(row)
-    finally:
-        conn.close()
+        return row
 
 
 @app.post("/api/sessions", response_model=SessionResponse, status_code=201)
 def create_session(body: SessionCreateRequest):
-    conn = get_connection()
-    try:
+    with get_connection() as conn:
         script = conn.execute(
-            "SELECT id FROM scripts WHERE id = ?", (body.script_id,)
+            "SELECT id FROM scripts WHERE id = %s", (body.script_id,)
         ).fetchone()
         if script is None:
             raise HTTPException(status_code=404, detail="script not found")
 
-        cursor = conn.execute(
+        return conn.execute(
             "INSERT INTO sessions "
             "(script_id, user_id, started_at, ended_at, words_completed, total_words) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            f"VALUES (%s, %s, %s, %s, %s, %s) RETURNING {SESSION_COLUMNS}",
             (
                 body.script_id,
                 body.user_id,
@@ -217,30 +199,16 @@ def create_session(body: SessionCreateRequest):
                 body.words_completed,
                 body.total_words,
             ),
-        )
-        conn.commit()
-        row = conn.execute(
-            "SELECT id, script_id, user_id, started_at, ended_at, words_completed, total_words "
-            "FROM sessions WHERE id = ?",
-            (cursor.lastrowid,),
         ).fetchone()
-        return dict(row)
-    finally:
-        conn.close()
 
 
 @app.get("/api/scripts/{script_id}/sessions", response_model=list[SessionResponse])
 def list_sessions(script_id: int):
-    conn = get_connection()
-    try:
-        rows = conn.execute(
-            "SELECT id, script_id, user_id, started_at, ended_at, words_completed, total_words "
-            "FROM sessions WHERE script_id = ? ORDER BY started_at DESC",
+    with get_connection() as conn:
+        return conn.execute(
+            f"SELECT {SESSION_COLUMNS} FROM sessions WHERE script_id = %s ORDER BY started_at DESC",
             (script_id,),
         ).fetchall()
-        return [dict(row) for row in rows]
-    finally:
-        conn.close()
 
 
 def _client_ip(request: Request) -> str:

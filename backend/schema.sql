@@ -1,23 +1,25 @@
 CREATE TABLE IF NOT EXISTS users (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  username TEXT NOT NULL UNIQUE COLLATE NOCASE,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  username TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- case-insensitive uniqueness, same behavior as the old COLLATE NOCASE
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_lower ON users (lower(username));
 
 CREATE TABLE IF NOT EXISTS scripts (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id INTEGER NOT NULL REFERENCES users(id),
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  user_id BIGINT NOT NULL REFERENCES users(id),
   text TEXT NOT NULL,
   word_count INTEGER NOT NULL,
   est_read_time_seconds INTEGER NOT NULL,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_scripts_user_id ON scripts(user_id);
 
 CREATE TABLE IF NOT EXISTS sessions (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  script_id INTEGER NOT NULL REFERENCES scripts(id),
-  user_id INTEGER NOT NULL REFERENCES users(id),
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  script_id BIGINT NOT NULL REFERENCES scripts(id),
+  user_id BIGINT NOT NULL REFERENCES users(id),
   started_at TEXT NOT NULL,
   ended_at TEXT NOT NULL,
   words_completed INTEGER NOT NULL,

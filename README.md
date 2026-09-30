@@ -2,7 +2,7 @@
 
 A teleprompter that follows *you* — it advances through your script by listening to what you actually say, at your own pace, instead of scrolling at a fixed speed. Paste a script or have one generated for you, read it aloud, and get your words-per-minute and completion stats when you're done.
 
-https://frontend-production-78ab8.up.railway.app
+<!-- live URL: add your Vercel URL here -->
 
 ## Features
 
@@ -14,8 +14,8 @@ https://frontend-production-78ab8.up.railway.app
 ## Tech stack
 
 - **Frontend:** React, TypeScript, Vite, Tailwind CSS
-- **Backend:** FastAPI (Python), SQLite
-- **Deployment:** Railway (frontend and backend as two independent services)
+- **Backend:** FastAPI (Python), PostgreSQL (Neon)
+- **Deployment:** Vercel (frontend), Render (backend)
 
 ## Project structure
 
@@ -32,6 +32,7 @@ backend/    FastAPI app — accounts, script history, session stats, AI script g
 cd backend
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
+docker run -d -p 5432:5432 -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=verbatim postgres:16
 cp .env.example .env   # fill in GEMINI_API_KEY if you want script generation to work
 uvicorn app.main:app --reload --port 8000
 ```
@@ -47,13 +48,14 @@ echo "VITE_API_URL=http://localhost:8000" > .env.local
 npm run dev
 ```
 
-Speech recognition and script generation both require the app to be talking to a running backend, but pasting and reading a script works with no backend at all.
+Speech recognition runs entirely in the browser. Only accounts, history, and script generation need the backend.
 
 ## Deployment notes
 
-- Both services deploy independently via `railway up` from their respective directories.
-- The backend needs a Railway **volume** mounted (e.g. at `/data`, with `DATABASE_PATH` pointed at it) — without one, the SQLite database is wiped on every redeploy.
-- The frontend needs `VITE_API_URL` set to the backend's public URL. Vite inlines this at **build time**, so it's committed in `frontend/.env.production` rather than set as a Railway variable (Railway's remote build cache doesn't reliably pick up env-var-only changes on unrelated redeploys).
+- **Backend → Render** (free web service), configured by `render.yaml`. Env vars: `DATABASE_URL` (Neon), `ALLOWED_ORIGINS` (the Vercel URL), `GEMINI_API_KEY`.
+- **Database → Neon** (free Postgres). Render's free tier has no persistent disk, so the database lives outside it.
+- **Frontend → Vercel**, root directory `frontend`. Set `VITE_API_URL` to the Render URL in Vercel's project settings (it's inlined at build time, so redeploy after changing it).
+- Render's free tier sleeps after ~15 min idle, so the first request after that takes ~30–60s.
 
 ## Known issues
 

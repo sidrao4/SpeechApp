@@ -1,26 +1,23 @@
 import os
-import sqlite3
 from pathlib import Path
 
-# falls back to a local file (gitignored) for dev. in prod this needs to
-# point at a mounted Railway volume or the db gets wiped on every redeploy
-DATABASE_PATH = Path(os.environ.get("DATABASE_PATH", "./data/verbatim.db"))
+import psycopg
+from psycopg.rows import dict_row
+
+# Postgres connection string. in prod this is the Neon URL set on Render
+# (Render's free tier has no persistent disk, so a local SQLite file would
+# get wiped on every restart). for local dev, point it at any Postgres —
+# see the README for a one-line docker command
+DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/verbatim")
 
 SCHEMA_PATH = Path(__file__).resolve().parent.parent / "schema.sql"
 
 
-def get_connection() -> sqlite3.Connection:
-    DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DATABASE_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+def get_connection() -> psycopg.Connection:
+    # rows come back as dicts so the route handlers can return them as-is
+    return psycopg.connect(DATABASE_URL, row_factory=dict_row)
 
 
 def init_db() -> None:
-    conn = get_connection()
-    try:
-        conn.executescript(SCHEMA_PATH.read_text())
-        conn.commit()
-    finally:
-        conn.close()
+    with get_connection() as conn:
+        conn.execute(SCHEMA_PATH.read_text())
