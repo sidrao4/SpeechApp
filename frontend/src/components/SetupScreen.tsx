@@ -1,14 +1,13 @@
 import { useState } from 'react'
 import { LoginWidget } from './LoginWidget'
 import { ScriptHistory } from './ScriptHistory'
-import type { Script, ScriptLength, User } from '../lib/api'
+import type { Script, ScriptLength } from '../lib/api'
+import type { useAuth } from '../hooks/useAuth'
 
 type Source = 'pasted' | 'generated'
 
 interface Props {
-  user: User | null
-  onLogin: (username: string) => Promise<void>
-  onLogout: () => void
+  auth: ReturnType<typeof useAuth>
   scripts: Script[]
   onSelectScript: (script: Script) => void
   onStart: (script: string, options: { autoSave: boolean; scriptId: number | null }) => void
@@ -23,9 +22,7 @@ const LENGTH_LABELS: Record<ScriptLength, string> = {
 }
 
 export function SetupScreen({
-  user,
-  onLogin,
-  onLogout,
+  auth,
   scripts,
   onSelectScript,
   onStart,
@@ -89,12 +86,21 @@ export function SetupScreen({
   return (
     <div className="flex min-h-full flex-col items-center justify-center gap-6 bg-neutral-900 p-6 text-neutral-100">
       <div className="flex w-full max-w-2xl justify-end">
-        <LoginWidget user={user} onLogin={onLogin} onLogout={onLogout} />
+        <LoginWidget
+          user={auth.user}
+          checking={auth.checking}
+          googleEnabled={auth.googleEnabled}
+          redirectError={auth.redirectError}
+          onLogin={auth.login}
+          onRegister={auth.register}
+          onLogout={auth.logout}
+          onGoogle={auth.loginWithGoogle}
+        />
       </div>
 
       <h1 className="text-3xl font-semibold tracking-tight text-amber-400">verbatim</h1>
 
-      {user && <ScriptHistory scripts={scripts} onSelect={onSelectScript} />}
+      {auth.user && <ScriptHistory scripts={scripts} onSelect={onSelectScript} />}
 
       <div className="w-full max-w-2xl rounded-lg border border-neutral-700 bg-neutral-800/50 p-4">
         <p className="mb-2 text-sm text-neutral-400">generate a script about...</p>
@@ -141,7 +147,7 @@ export function SetupScreen({
       {source === 'generated' && (
         <div className="flex items-center gap-3 text-sm text-neutral-400">
           <span>✦ generated script</span>
-          {user &&
+          {auth.user &&
             (savedScriptId !== null ? (
               <span className="text-green-400">saved</span>
             ) : (

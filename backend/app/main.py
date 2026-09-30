@@ -1,26 +1,24 @@
 import os
-import time
-from datetime import datetime
-from collections import defaultdict
 from contextlib import asynccontextmanager
+from datetime import datetime
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import Depends, FastAPI, HTTPException, Request
 from google import genai
 from google.genai import errors as genai_errors
 from pydantic import BaseModel, Field
+from starlette.middleware.sessions import SessionMiddleware
 
+from .auth_routes import router as auth_router
 from .db import get_connection, init_db
+from .ratelimit import check_rate_limit
+from .security import COOKIE_SECURE, get_current_user_id
 
 WORDS_PER_MINUTE = 140
 
 # script generation hits a free (but rate limited) api with no login
 # needed, so this just caps how much one client can hammer it
 GENERATE_LENGTH_TARGETS = {"short": 60, "medium": 150, "long": 300}
-RATE_LIMIT_WINDOW_SECONDS = 600
-RATE_LIMIT_MAX_REQUESTS = 5
-_rate_limit_state: dict[str, list[float]] = defaultdict(list)
 
 # using the -latest alias here, google says not to for prod since it can
 # swap versions with only ~2 weeks notice, but for a small project that's
@@ -46,32 +44,25 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-_default_origins = "http://localhost:5173,http://127.0.0.1:5173"
-allowed_origins = [
-    origin.strip()
-    for origin in os.environ.get("ALLOWED_ORIGINS", _default_origins).split(",")
-    if origin.strip()
-]
+# no CORS middleware: the browser only ever talks to the frontend's origin,
+# and Vercel (or the Vite dev proxy locally) forwards /api/* here, so every
+# request is same-origin
 
+# signed cookie that holds the Google OAuth state + PKCE verifier between the
+# redirect out and the callback. nothing else goes in it
 app.add_middleware(
-    CORSMiddleware,
-    allow_origins=allowed_origins,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    SessionMiddleware,
+    secret_key=os.environ.get("SESSION_SECRET") or os.environ["JWT_SECRET"],
+    session_cookie="oauth_session",
+    max_age=600,
+    same_site="lax",
+    https_only=COOKIE_SECURE,
 )
 
-
-class LoginRequest(BaseModel):
-    username: str = Field(min_length=1)
-
-
-class LoginResponse(BaseModel):
-    id: int
-    username: str
+app.include_router(auth_router)
 
 
 class ScriptCreateRequest(BaseModel):
-    user_id: int
     text: str = Field(min_length=1)
 
 
@@ -86,7 +77,6 @@ class ScriptResponse(BaseModel):
 
 class SessionCreateRequest(BaseModel):
     script_id: int
-    user_id: int
     started_at: str
     ended_at: str
     words_completed: int
@@ -112,37 +102,29 @@ class GenerateScriptResponse(BaseModel):
     text: str
 
 
+SCRIPT_COLUMNS = "id, user_id, text, word_count, est_read_time_seconds, created_at"
+SESSION_COLUMNS = "id, script_id, user_id, started_at, ended_at, words_completed, total_words"
+
+
+def _get_owned_script(conn, script_id: int, user_id: int):
+    # ownership is part of the WHERE clause, and someone else's script gets
+    # the same 404 as a missing one, so ids can't be probed for existence
+    row = conn.execute(
+        f"SELECT {SCRIPT_COLUMNS} FROM scripts WHERE id = %s AND user_id = %s",
+        (script_id, user_id),
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="script not found")
+    return row
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
 
-@app.post("/api/login", response_model=LoginResponse)
-def login(body: LoginRequest):
-    username = body.username.strip()
-    if not username:
-        raise HTTPException(status_code=422, detail="username cannot be empty")
-
-    with get_connection() as conn:
-        row = conn.execute(
-            "SELECT id, username FROM users WHERE lower(username) = lower(%s)",
-            (username,),
-        ).fetchone()
-        if row is not None:
-            return row
-
-        return conn.execute(
-            "INSERT INTO users (username) VALUES (%s) RETURNING id, username",
-            (username,),
-        ).fetchone()
-
-
-SCRIPT_COLUMNS = "id, user_id, text, word_count, est_read_time_seconds, created_at"
-SESSION_COLUMNS = "id, script_id, user_id, started_at, ended_at, words_completed, total_words"
-
-
 @app.get("/api/scripts", response_model=list[ScriptResponse])
-def list_scripts(user_id: int = Query(...)):
+def list_scripts(user_id: int = Depends(get_current_user_id)):
     with get_connection() as conn:
         return conn.execute(
             f"SELECT {SCRIPT_COLUMNS} FROM scripts WHERE user_id = %s ORDER BY created_at DESC",
@@ -151,49 +133,35 @@ def list_scripts(user_id: int = Query(...)):
 
 
 @app.post("/api/scripts", response_model=ScriptResponse, status_code=201)
-def create_script(body: ScriptCreateRequest):
+def create_script(body: ScriptCreateRequest, user_id: int = Depends(get_current_user_id)):
+    word_count = len(body.text.split())
+    est_read_time_seconds = round(word_count * 60 / WORDS_PER_MINUTE)
+
     with get_connection() as conn:
-        user = conn.execute("SELECT id FROM users WHERE id = %s", (body.user_id,)).fetchone()
-        if user is None:
-            raise HTTPException(status_code=404, detail="user not found")
-
-        word_count = len(body.text.split())
-        est_read_time_seconds = round(word_count * 60 / WORDS_PER_MINUTE)
-
         return conn.execute(
             "INSERT INTO scripts (user_id, text, word_count, est_read_time_seconds) "
             f"VALUES (%s, %s, %s, %s) RETURNING {SCRIPT_COLUMNS}",
-            (body.user_id, body.text, word_count, est_read_time_seconds),
+            (user_id, body.text, word_count, est_read_time_seconds),
         ).fetchone()
 
 
 @app.get("/api/scripts/{script_id}", response_model=ScriptResponse)
-def get_script(script_id: int):
+def get_script(script_id: int, user_id: int = Depends(get_current_user_id)):
     with get_connection() as conn:
-        row = conn.execute(
-            f"SELECT {SCRIPT_COLUMNS} FROM scripts WHERE id = %s", (script_id,)
-        ).fetchone()
-        if row is None:
-            raise HTTPException(status_code=404, detail="script not found")
-        return row
+        return _get_owned_script(conn, script_id, user_id)
 
 
 @app.post("/api/sessions", response_model=SessionResponse, status_code=201)
-def create_session(body: SessionCreateRequest):
+def create_session(body: SessionCreateRequest, user_id: int = Depends(get_current_user_id)):
     with get_connection() as conn:
-        script = conn.execute(
-            "SELECT id FROM scripts WHERE id = %s", (body.script_id,)
-        ).fetchone()
-        if script is None:
-            raise HTTPException(status_code=404, detail="script not found")
-
+        _get_owned_script(conn, body.script_id, user_id)
         return conn.execute(
             "INSERT INTO sessions "
             "(script_id, user_id, started_at, ended_at, words_completed, total_words) "
             f"VALUES (%s, %s, %s, %s, %s, %s) RETURNING {SESSION_COLUMNS}",
             (
                 body.script_id,
-                body.user_id,
+                user_id,
                 body.started_at,
                 body.ended_at,
                 body.words_completed,
@@ -203,36 +171,21 @@ def create_session(body: SessionCreateRequest):
 
 
 @app.get("/api/scripts/{script_id}/sessions", response_model=list[SessionResponse])
-def list_sessions(script_id: int):
+def list_sessions(script_id: int, user_id: int = Depends(get_current_user_id)):
     with get_connection() as conn:
+        _get_owned_script(conn, script_id, user_id)
         return conn.execute(
             f"SELECT {SESSION_COLUMNS} FROM sessions WHERE script_id = %s ORDER BY started_at DESC",
             (script_id,),
         ).fetchall()
 
 
-def _client_ip(request: Request) -> str:
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
-
-
-def _check_rate_limit(client_ip: str) -> None:
-    now = time.time()
-    recent = [t for t in _rate_limit_state[client_ip] if now - t < RATE_LIMIT_WINDOW_SECONDS]
-    if len(recent) >= RATE_LIMIT_MAX_REQUESTS:
-        raise HTTPException(
-            status_code=429,
-            detail="Too many script generations from this connection — try again in a few minutes.",
-        )
-    recent.append(now)
-    _rate_limit_state[client_ip] = recent
-
-
 @app.post("/api/generate-script", response_model=GenerateScriptResponse)
 def generate_script(body: GenerateScriptRequest, request: Request):
-    _check_rate_limit(_client_ip(request))
+    check_rate_limit(
+        request, "generate", max_requests=5, window_seconds=600,
+        detail="Too many script generations from this connection — try again in a few minutes.",
+    )
     client = get_genai_client()
 
     target_words = GENERATE_LENGTH_TARGETS[body.length]

@@ -23,12 +23,13 @@ function App() {
   // session, etc) - easiest way to fully reset on restart
   const [attempt, setAttempt] = useState(0)
 
-  const { user, login, logout } = useAuth()
+  const auth = useAuth()
+  const { user } = auth
   const [scripts, setScripts] = useState<Script[]>([])
 
-  const refreshScripts = useCallback(async (userId: number) => {
+  const refreshScripts = useCallback(async () => {
     try {
-      setScripts(await api.listScripts(userId))
+      setScripts(await api.listScripts())
     } catch {
       // history is a nice-to-have, if the backend's down the rest of the
       // app should still work fine
@@ -37,7 +38,7 @@ function App() {
 
   useEffect(() => {
     if (user) {
-      refreshScripts(user.id)
+      refreshScripts()
     } else {
       setScripts([])
     }
@@ -47,7 +48,7 @@ function App() {
     let usedScriptId = options.scriptId
     if (user && options.autoSave && usedScriptId === null) {
       try {
-        const created = await api.createScript(user.id, text)
+        const created = await api.createScript(text)
         usedScriptId = created.id
         setScripts((prev) => [created, ...prev])
       } catch {
@@ -72,7 +73,7 @@ function App() {
   async function handleSaveScript(text: string): Promise<Script | null> {
     if (!user) return null
     try {
-      const created = await api.createScript(user.id, text)
+      const created = await api.createScript(text)
       setScripts((prev) => [created, ...prev])
       return created
     } catch {
@@ -85,7 +86,7 @@ function App() {
       <Teleprompter
         key={attempt}
         script={script}
-        userId={user?.id ?? null}
+        loggedIn={user !== null}
         scriptId={scriptId}
         onExit={() => setScreen('setup')}
         onRestart={() => setAttempt((a) => a + 1)}
@@ -95,9 +96,7 @@ function App() {
 
   return (
     <SetupScreen
-      user={user}
-      onLogin={login}
-      onLogout={logout}
+      auth={auth}
       scripts={scripts}
       onSelectScript={handleSelectScript}
       onStart={handleStartFromText}

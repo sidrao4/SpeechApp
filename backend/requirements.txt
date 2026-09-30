@@ -2,3 +2,8 @@ fastapi
 uvicorn[standard]
 google-genai
 psycopg[binary]
+pwdlib[argon2]
+PyJWT
+authlib
+httpx
+itsdangerous

@@ -12,7 +12,15 @@ services:
         value: 3.12.7
       - key: DATABASE_URL
         sync: false
-      - key: ALLOWED_ORIGINS
+      - key: JWT_SECRET
+        generateValue: true
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: PUBLIC_URL
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
         sync: false
       - key: GEMINI_API_KEY
         sync: false

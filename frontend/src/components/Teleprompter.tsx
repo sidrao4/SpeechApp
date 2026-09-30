@@ -5,7 +5,7 @@ import * as api from '../lib/api'
 
 interface Props {
   script: string
-  userId: number | null
+  loggedIn: boolean
   scriptId: number | null
   onExit: () => void
   onRestart: () => void
@@ -24,7 +24,7 @@ function formatDuration(totalSeconds: number): string {
   return `${minutes}:${String(seconds).padStart(2, '0')}`
 }
 
-export function Teleprompter({ script, userId, scriptId, onExit, onRestart }: Props) {
+export function Teleprompter({ script, loggedIn, scriptId, onExit, onRestart }: Props) {
   const { words, cursor, listening, supported, error } = useSpeechTeleprompter(script)
   const currentRef = useRef<HTMLSpanElement>(null)
 
@@ -38,12 +38,11 @@ export function Teleprompter({ script, userId, scriptId, onExit, onRestart }: Pr
   const recordSession = useCallback(() => {
     if (recordedRef.current) return
     recordedRef.current = true
-    if (userId === null || scriptId === null) return
+    if (!loggedIn || scriptId === null) return
 
     api
       .createSession({
         scriptId,
-        userId,
         startedAt: startedAtRef.current,
         endedAt: new Date().toISOString(),
         wordsCompleted: cursor,
@@ -52,7 +51,7 @@ export function Teleprompter({ script, userId, scriptId, onExit, onRestart }: Pr
       .catch(() => {
         // best-effort, don't bug the user about it
       })
-  }, [userId, scriptId, cursor, words.length])
+  }, [loggedIn, scriptId, cursor, words.length])
 
   useEffect(() => {
     if (words.length > 0 && cursor >= words.length) {
