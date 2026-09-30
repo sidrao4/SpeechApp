@@ -3,7 +3,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://verbatim-api.onrender.com/api/:path*"
+      "destination": "https://verbatim-api-uffb.onrender.com/api/:path*"
     }
   ]
 }
